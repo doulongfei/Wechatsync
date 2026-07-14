@@ -9,6 +9,8 @@ dist
 !.env.example
 coverage
 *.zip
+.worktrees/
+artifacts/
 
 # IDE
 .vscode/*
