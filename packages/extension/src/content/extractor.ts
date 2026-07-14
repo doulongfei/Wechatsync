@@ -17,6 +17,7 @@ import { htmlToMarkdownNative, type PreprocessConfig } from '@wechatsync/core'
 import { createLogger } from '../lib/logger'
 import { preprocessContentDOM, preprocessForPlatform, backupAndSimplifyCodeBlocks, restoreCodeBlocks, type PreprocessResult } from '../lib/content-processor'
 import { createSyncFab } from '../lib/fab'
+import { selectArticleCover } from './cover-selector'
 
 const logger = createLogger('Extractor')
 
@@ -802,7 +803,10 @@ function readerResultToArticle(result: ReaderResult): ExtractedArticle {
     markdown,
     html: processedHtml, // 预处理后的 HTML
     summary: result.excerpt,
-    cover: result.leadingImage || result.mainImage,
+    cover: selectArticleCover(document, {
+      leadingImage: result.leadingImage,
+      mainImage: result.mainImage,
+    }),
     source: {
       url: window.location.href,
       platform: result.extractor,
@@ -879,7 +883,7 @@ function extractWithSelectors(): ExtractedArticle | null {
   // 转换为 Markdown
   const markdown = htmlToMarkdownNative(html)
 
-  const cover = document.querySelector('meta[property="og:image"]')?.getAttribute('content')
+  const cover = selectArticleCover(document, {})
   const summary = document.querySelector('meta[property="og:description"]')?.getAttribute('content')
 
   return {

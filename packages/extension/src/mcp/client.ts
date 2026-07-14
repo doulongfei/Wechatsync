@@ -9,6 +9,10 @@ import {
 import { markdownToHtml } from '@wechatsync/core'
 import { createLogger } from '../lib/logger'
 import { performSync } from '../background/sync-service'
+import {
+  normalizeBridgeArticle,
+  type BridgeArticleInput,
+} from './article-normalization'
 
 const logger = createLogger('MCPClient')
 
@@ -324,12 +328,7 @@ class McpClient {
 
       case 'syncArticle': {
         const platforms = params?.platforms as string[]
-        const articleData = params?.article as {
-          title: string
-          content?: string
-          markdown?: string
-          cover?: string
-        }
+        const articleData = params?.article as BridgeArticleInput
 
         if (!platforms?.length) throw new Error('Missing platforms parameter')
         if (!articleData?.title) throw new Error('Missing article title')
@@ -351,13 +350,7 @@ class McpClient {
           }
         }
 
-        const article = {
-          title: articleData.title,
-          content: htmlContent,
-          html: htmlContent,
-          markdown: markdown,
-          cover: articleData.cover,
-        }
+        const article = normalizeBridgeArticle(articleData, htmlContent)
 
         // 使用 sync-service 进行同步（支持 DSL 平台 + CMS 账户、历史记录、状态保存）
         const { results, syncId } = await performSync(
