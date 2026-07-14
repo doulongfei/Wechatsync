@@ -31,8 +31,49 @@ wechatsync sync article.md -t "我的文章" -p zhihu
 # 添加封面
 wechatsync sync article.md -p juejin --cover https://example.com/cover.jpg
 
+# 直接同步 Hexo 源文章到微信公众号草稿
+wechatsync sync /path/to/hexo/source/_posts/article.md -p weixin
+
 # 预览（不实际同步）
 wechatsync sync article.md --dry-run
+```
+
+### Hexo Front Matter
+
+CLI 自动识别标准 Hexo Front Matter：
+
+```yaml
+---
+title: 文章标题
+cover: ./cover.jpg
+summary: 文章摘要
+tags:
+  - hexo
+  - wechat
+categories: 技术
+canonical: https://blog.example.com/posts/article/
+sync:
+  enabled: true
+  targets:
+    - weixin
+---
+```
+
+支持字段：`title`、`cover`、`summary`/`description`/`excerpt`、`tags`、`category`/`categories`、`canonical` 和 `sync`。
+
+- `./cover.jpg` 相对于 Markdown 文件目录解析。
+- `/img/cover.jpg` 相对于最近 Hexo 项目的 `source/` 目录解析。
+- 显式 `-p` 优先于 `sync.targets`，也可以覆盖 `sync.enabled: false`。
+- 未指定 `-p` 时，使用已启用且非空的 `sync.targets`；否则保持默认平台 `zhihu,juejin`。
+- Front Matter 的标题与正文首个 H1 相同时，CLI 自动删除重复 H1。
+
+微信公众号同步需要安装本仓库同版本 Chrome 扩展、启用同步桥接，并在浏览器中登录 `mp.weixin.qq.com`。命令只创建草稿。
+
+### 安装本地构建包
+
+```bash
+npm install -g ./wechatsync-cli-1.2.0.tgz
+wechatsync --version
 ```
 
 ### platforms - 查看平台

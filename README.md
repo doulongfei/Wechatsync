@@ -83,7 +83,7 @@
 | 网易号 | netease | 通用 | ✅ |
 | WordPress | wordpress | 建站/CMS | ✅ |
 | Typecho | typecho | 建站/CMS | ✅ |
-| Hexo | zip-download | 建站/CMS | ✅ 通过 Markdown 下载 |
+| Hexo | hexo-source | 建站/CMS | ✅ CLI 直接同步源文章 |
 | Hugo | zip-download | 建站/CMS | ✅ 通过 Markdown 下载 |
 
 - [提交新平台请求](https://airtable.com/shrLSJMnTC2BlmP29)
@@ -103,6 +103,9 @@ export WECHATSYNC_TOKEN="你的token"
 
 # 同步文章到多个平台
 wechatsync sync article.md -p zhihu,juejin,csdn
+
+# 直接把 Hexo 源文章保存到微信公众号草稿
+wechatsync sync /path/to/hexo/source/_posts/article.md -p weixin
 
 # 查看平台登录状态
 wechatsync platforms --auth
@@ -131,6 +134,34 @@ clawhub install lljxx1/wechatsync
 ```
 
 详细文档见 [packages/cli/README.md](packages/cli/README.md)
+
+### Hexo 源文章支持（doulongfei fork）
+
+本分支可以直接读取标准 Hexo Front Matter，无需先生成网页或复制正文：
+
+```yaml
+---
+title: 文章标题
+cover: https://example.com/cover.jpg
+summary: 微信公众号摘要
+tags: [hexo, wechat]
+categories: 技术
+canonical: https://blog.example.com/posts/article/
+sync:
+  enabled: true
+  targets: [weixin]
+---
+```
+
+CLI 会解析标题、摘要、标签、分类、原文地址和封面，去掉与 `title` 相同的正文首个 H1，并解析文章目录中的相对图片。`/img/cover.jpg` 这类 Hexo 根路径会从最近的 `_config.yml` 所在项目的 `source/` 目录读取。
+
+平台选择优先级为：显式 `-p`、启用且非空的 `sync.targets`、默认 `zhihu,juejin`。因此，即使文章设置了 `sync.enabled: false`，仍可通过显式命令手动同步：
+
+```bash
+wechatsync sync source/_posts/article.md -p weixin
+```
+
+微信公众号封面会在浏览器登录态中上传，并生成 2.35:1 与 1:1 两种裁剪后写入草稿。扩展默认只创建草稿，不会自动公开发布。
 
 ## Claude Code / Claude Desktop 集成 (Anthropic MCP)
 
@@ -218,6 +249,13 @@ pnpm build
 然后在 Chrome 中加载 `packages/extension/dist` 目录。
 
 ## 更新日志
+
+### v2.1.0 (2026-07-14, doulongfei fork)
+
+- 🆕 CLI 直接解析 Hexo Front Matter、同步目标和本地封面
+- 🆕 微信公众号草稿支持上传和裁剪文章封面
+- 🔧 网页提取优先使用 `og:image`，避免误选 favicon、头像等非文章图片
+- 🔧 CLI 与扩展桥接保留摘要、标签、分类和 canonical 原文地址
 
 ### v2.0.9 (2026-03-24)
 
