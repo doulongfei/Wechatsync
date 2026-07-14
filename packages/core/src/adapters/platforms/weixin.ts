@@ -6,6 +6,13 @@ import type { Article, AuthResult, SyncResult, PlatformMeta } from '../../types'
 import type { PublishOptions } from '../types'
 import { createLogger } from '../../lib/logger'
 import juice from 'juice'
+import {
+  buildWeixinCoverFields,
+  buildWeixinDigestFields,
+  calculateCenteredCrop,
+  type CropRect,
+  type PreparedWeixinCover,
+} from './weixin-cover'
 
 const logger = createLogger('Weixin')
 
@@ -16,6 +23,16 @@ interface WeixinMeta {
   ticket: string
   svrTime: number
   avatar: string
+}
+
+interface WeixinUploadedImage {
+  url: string
+  fileId: string
+}
+
+interface WeixinCroppedImage {
+  url: string
+  fileId: string
 }
 
 // 微信公众号的默认 CSS 样式
@@ -50,7 +67,7 @@ export class WeixinAdapter extends CodeAdapter {
     name: '微信公众号',
     icon: 'https://mp.weixin.qq.com/favicon.ico',
     homepage: 'https://mp.weixin.qq.com',
-    capabilities: ['article', 'draft', 'image_upload'],
+    capabilities: ['article', 'draft', 'image_upload', 'cover'],
   }
 
   /** 预处理配置: 微信公众号使用 HTML 格式，移除非微信域名链接，压缩标签间空白避免 ProseMirror 产生空节点 */
@@ -164,6 +181,12 @@ export class WeixinAdapter extends CodeAdapter {
         content = this.processContent(content)
       }
 
+      const preparedCover = article.cover
+        ? await this.prepareCover(article.cover)
+        : undefined
+      const coverFields = buildWeixinCoverFields(preparedCover)
+      const digestFields = buildWeixinDigestFields(article.summary)
+
       const formData = new URLSearchParams({
         token: this.weixinMeta!.token,
         lang: 'zh_CN',
@@ -183,17 +206,12 @@ export class WeixinAdapter extends CodeAdapter {
         author0: '',
         writerid0: '0',
         fileid0: '',
-        digest0: '',
-        auto_gen_digest0: '1',
+        ...digestFields,
         content0: content,
         sourceurl0: '',
         need_open_comment0: '1',
         only_fans_can_comment0: '0',
-        cdn_url0: '',
-        cdn_235_1_url0: '',
-        cdn_1_1_url0: '',
-        cdn_url_back0: '',
-        crop_list0: '',
+        ...coverFields,
         music_id0: '',
         video_id0: '',
         voteid0: '',
@@ -203,7 +221,6 @@ export class WeixinAdapter extends CodeAdapter {
         cardquantity0: '',
         cardlimit0: '',
         vid_type0: '',
-        show_cover_pic0: '0',
         shortvideofileid0: '',
         copyright_type0: '0',
         releasefirst0: '',
@@ -269,19 +286,35 @@ export class WeixinAdapter extends CodeAdapter {
   }
 
   protected async uploadImageByUrl(src: string): Promise<ImageUploadResult> {
+    const imageBlob = await this.downloadImage(src)
+    const uploaded = await this.uploadImageBlob(imageBlob, src)
+    return { url: uploaded.url }
+  }
+
+  private async downloadImage(src: string): Promise<Blob> {
+    const imageResponse = await fetch(src)
+    if (!imageResponse.ok) {
+      throw new Error(`图片下载失败 (${imageResponse.status}): ${src}`)
+    }
+    return await imageResponse.blob()
+  }
+
+  private async uploadImageBlob(
+    imageBlob: Blob,
+    sourceDescription: string
+  ): Promise<WeixinUploadedImage> {
     if (!this.weixinMeta) {
       throw new Error('未登录')
     }
 
-    const imageResponse = await fetch(src)
-    if (!imageResponse.ok) {
-      throw new Error('图片下载失败: ' + src)
-    }
-    const imageBlob = await imageResponse.blob()
-
     const formData = new FormData()
     const timestamp = Date.now()
-    const fileName = `${timestamp}.jpg`
+    const extension = imageBlob.type === 'image/png'
+      ? 'png'
+      : imageBlob.type === 'image/webp'
+        ? 'webp'
+        : 'jpg'
+    const fileName = `${timestamp}.${extension}`
 
     formData.append('type', imageBlob.type || 'image/jpeg')
     formData.append('id', String(timestamp))
@@ -310,13 +343,123 @@ export class WeixinAdapter extends CodeAdapter {
 
     logger.debug(' Image upload response:', res)
 
-    if (res.base_resp?.err_msg !== 'ok' || !res.cdn_url) {
-      throw new Error('图片上传失败: ' + src)
+    if (res.base_resp?.err_msg !== 'ok' || !res.cdn_url || !res.content) {
+      throw new Error(
+        `图片上传失败: ${sourceDescription} (${res.base_resp?.err_msg || 'invalid response'})`
+      )
     }
 
     return {
       url: res.cdn_url,
+      fileId: res.content,
     }
+  }
+
+  private async prepareCover(src: string): Promise<PreparedWeixinCover> {
+    let imageBlob: Blob
+    try {
+      imageBlob = await this.downloadImage(src)
+    } catch (error) {
+      throw new Error(`封面图下载失败: ${(error as Error).message}`)
+    }
+
+    if (typeof createImageBitmap !== 'function') {
+      throw new Error('封面图解析失败: 当前浏览器不支持 createImageBitmap')
+    }
+
+    let width: number
+    let height: number
+    try {
+      const bitmap = await createImageBitmap(imageBlob)
+      width = bitmap.width
+      height = bitmap.height
+      bitmap.close()
+    } catch (error) {
+      throw new Error(`封面图解析失败: ${(error as Error).message}`)
+    }
+
+    let uploaded: WeixinUploadedImage
+    try {
+      uploaded = await this.uploadImageBlob(imageBlob, src)
+    } catch (error) {
+      throw new Error(`封面图上传失败: ${(error as Error).message}`)
+    }
+
+    const wideRect = calculateCenteredCrop(width, height, 2.35)
+    const squareRect = calculateCenteredCrop(width, height, 1)
+    let cropped: [WeixinCroppedImage, WeixinCroppedImage]
+    try {
+      cropped = await this.cropCover(uploaded.url, [wideRect, squareRect])
+    } catch (error) {
+      throw new Error(`封面图裁剪失败: ${(error as Error).message}`)
+    }
+
+    return {
+      originalUrl: uploaded.url,
+      originalFileId: uploaded.fileId,
+      crops: {
+        '2.35_1': {
+          url: cropped[0].url,
+          fileId: cropped[0].fileId,
+          rect: wideRect,
+        },
+        '1_1': {
+          url: cropped[1].url,
+          fileId: cropped[1].fileId,
+          rect: squareRect,
+        },
+      },
+    }
+  }
+
+  private async cropCover(
+    imageUrl: string,
+    rectangles: [CropRect, CropRect]
+  ): Promise<[WeixinCroppedImage, WeixinCroppedImage]> {
+    if (!this.weixinMeta) throw new Error('未登录')
+
+    const formData = new FormData()
+    formData.append('imgurl', imageUrl)
+    formData.append('size_count', String(rectangles.length))
+    rectangles.forEach((rect, index) => {
+      formData.append(`size${index}_x1`, String(rect.x1))
+      formData.append(`size${index}_y1`, String(rect.y1))
+      formData.append(`size${index}_x2`, String(rect.x2))
+      formData.append(`size${index}_y2`, String(rect.y2))
+    })
+    formData.append('token', this.weixinMeta.token)
+    formData.append('lang', 'zh_CN')
+    formData.append('f', 'json')
+    formData.append('ajax', '1')
+
+    const response = await this.runtime.fetch(
+      'https://mp.weixin.qq.com/cgi-bin/cropimage?action=crop_multi',
+      {
+        method: 'POST',
+        credentials: 'include',
+        body: formData,
+      }
+    )
+    const res = await response.json() as {
+      base_resp?: { err_msg?: string; ret?: number }
+      result?: Array<{ cdnurl?: string; file_id?: string | number }>
+    }
+
+    if (res.base_resp?.err_msg !== 'ok' || !res.result || res.result.length < 2) {
+      throw new Error(res.base_resp?.err_msg || 'invalid crop response')
+    }
+
+    const crops = res.result.slice(0, 2).map((item) => {
+      if (!item.cdnurl || item.file_id === undefined || item.file_id === null) {
+        throw new Error('crop response is missing cdnurl or file_id')
+      }
+      return {
+        url: item.cdnurl,
+        fileId: String(item.file_id),
+      }
+    })
+
+    return [crops[0], crops[1]]
   }
 
   private isLatexFormula(text: string): boolean {
