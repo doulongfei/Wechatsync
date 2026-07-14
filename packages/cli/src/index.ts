@@ -14,9 +14,13 @@ import ora from 'ora'
 import open from 'open'
 import fs from 'fs'
 import path from 'path'
-import juice from 'juice'
 import { ExtensionBridge } from '@wechatsync/mcp-server/bridge'
 import type { PlatformInfo, SyncResult } from '@wechatsync/mcp-server/bridge'
+import {
+  materializeCover,
+  parseFileContent as parseArticleSourceFile,
+  selectPlatforms,
+} from './article-source'
 
 const WS_PORT = parseInt(process.env.SYNC_WS_PORT || '9527', 10)
 
@@ -281,188 +285,6 @@ async function processLocalImages(
   return { content: processedContent, uploadedCount, failedCount }
 }
 
-// ============ Markdown/HTML 处理 ============
-
-interface ParsedContent {
-  title: string | null
-  content: string
-  format: 'markdown' | 'html'
-  /** 从 HTML meta 提取的封面图 */
-  cover?: string
-  /** 从 HTML meta 提取的摘要 */
-  summary?: string
-}
-
-/**
- * 解析文件内容，提取标题和正文
- */
-function parseFileContent(filePath: string): ParsedContent {
-  const content = fs.readFileSync(filePath, 'utf-8')
-  const ext = path.extname(filePath).toLowerCase()
-
-  if (ext === '.md' || ext === '.markdown') {
-    return parseMarkdown(content)
-  } else if (ext === '.html' || ext === '.htm') {
-    return parseHtml(content, filePath)
-  } else {
-    // 当作纯文本处理
-    return {
-      title: path.basename(filePath, ext),
-      content: content,
-      format: 'markdown',
-    }
-  }
-}
-
-/**
- * 解析 Markdown 文件
- */
-function parseMarkdown(content: string): ParsedContent {
-  let title: string | null = null
-  let body = content
-
-  // 1. 尝试从 YAML front matter 提取
-  const yamlMatch = content.match(/^---\s*\n([\s\S]*?)\n---\s*\n/)
-  if (yamlMatch) {
-    const frontMatter = yamlMatch[1]
-    const titleMatch = frontMatter.match(/^title:\s*["']?(.+?)["']?\s*$/m)
-    if (titleMatch) {
-      title = titleMatch[1].trim()
-    }
-    // 移除 front matter
-    body = content.slice(yamlMatch[0].length)
-  }
-
-  // 2. 尝试从 # 标题提取
-  if (!title) {
-    const h1Match = body.match(/^#\s+(.+)$/m)
-    if (h1Match) {
-      title = h1Match[1].trim()
-      // 移除标题行（只移除第一个匹配的）
-      body = body.replace(/^#\s+.+\n+/, '')
-    }
-  }
-
-  // 3. 清理内容
-  body = body.trim()
-
-  // 4. 如果内容为空，返回原始内容
-  if (!body) {
-    body = content
-  }
-
-  return {
-    title,
-    content: body,
-    format: 'markdown',
-  }
-}
-
-/**
- * 解析 HTML 文件
- * 1. 提取标题（title > h1）、meta 信息（封面、摘要）
- * 2. 解析本地 <link rel="stylesheet"> 引用
- * 3. 将 <style> CSS 内联到元素的 style 属性上（juice）
- */
-function parseHtml(content: string, filePath?: string): ParsedContent {
-  let title: string | null = null
-
-  // 从 <title> 标签提取
-  const titleMatch = content.match(/<title[^>]*>([^<]+)<\/title>/i)
-  if (titleMatch) {
-    title = titleMatch[1].trim()
-  }
-
-  // 从 <h1> 标签提取
-  if (!title) {
-    const h1Match = content.match(/<h1[^>]*>([^<]+)<\/h1>/i)
-    if (h1Match) {
-      title = h1Match[1].trim()
-    }
-  }
-
-  // 从 <meta> 标签提取封面和摘要
-  let cover: string | undefined
-  let summary: string | undefined
-  const ogImageMatch = content.match(/<meta\s[^>]*property=["']og:image["'][^>]*content=["']([^"']+)["'][^>]*>/i)
-    || content.match(/<meta\s[^>]*content=["']([^"']+)["'][^>]*property=["']og:image["'][^>]*>/i)
-  if (ogImageMatch) {
-    cover = ogImageMatch[1]
-  }
-  const descMatch = content.match(/<meta\s[^>]*name=["']description["'][^>]*content=["']([^"']+)["'][^>]*>/i)
-    || content.match(/<meta\s[^>]*content=["']([^"']+)["'][^>]*name=["']description["'][^>]*>/i)
-    || content.match(/<meta\s[^>]*property=["']og:description["'][^>]*content=["']([^"']+)["'][^>]*>/i)
-  if (descMatch) {
-    summary = (descMatch[1] || descMatch[2] || '').trim() || undefined
-  }
-
-  // 解析本地 <link rel="stylesheet"> 引用，读取并内联
-  const fileDir = filePath ? path.dirname(filePath) : undefined
-  if (fileDir) {
-    content = content.replace(
-      /<link\s[^>]*rel=["']stylesheet["'][^>]*href=["']([^"']+)["'][^>]*\/?>/gi,
-      (_match, href: string) => {
-        // 只处理本地文件，跳过 http(s) 链接
-        if (href.startsWith('http://') || href.startsWith('https://')) return _match
-        const cssPath = path.resolve(fileDir, href)
-        if (fs.existsSync(cssPath)) {
-          const css = fs.readFileSync(cssPath, 'utf-8')
-          return `<style>${css}</style>`
-        }
-        return _match
-      }
-    )
-  }
-
-  // 提取 <style> 标签（可能在 <head> 中），合并到 body
-  const styles: string[] = []
-  const styleRegex = /<style[^>]*>([\s\S]*?)<\/style>/gi
-  let styleMatch
-  while ((styleMatch = styleRegex.exec(content)) !== null) {
-    styles.push(styleMatch[0])
-  }
-
-  // 提取 body 内容
-  let body = content
-  const bodyMatch = content.match(/<body[^>]*>([\s\S]*?)<\/body>/i)
-  if (bodyMatch) {
-    body = bodyMatch[1].trim()
-  }
-
-  // 将 <head> 中的 <style> 合并到 body
-  const bodyStyles = new Set<string>()
-  const bodyStyleRegex = /<style[^>]*>([\s\S]*?)<\/style>/gi
-  let bs
-  while ((bs = bodyStyleRegex.exec(body)) !== null) {
-    bodyStyles.add(bs[0])
-  }
-  const extraStyles = styles.filter(s => !bodyStyles.has(s))
-  if (extraStyles.length > 0) {
-    body = extraStyles.join('\n') + '\n' + body
-  }
-
-  // 用 juice 将 <style> CSS 内联到元素的 style 属性
-  // 这样即使平台删除 <style> 标签，样式也能保留
-  try {
-    body = juice(body, {
-      removeStyleTags: true,
-      preserveImportant: true,
-      preserveMediaQueries: false,
-      preserveFontFaces: false,
-    })
-  } catch (e) {
-    // juice 失败不阻塞，保留原始 HTML
-  }
-
-  return {
-    title,
-    content: body,
-    format: 'html',
-    cover,
-    summary,
-  }
-}
-
 /**
  * 简单的 Markdown 转 HTML（用于需要 HTML 的平台）
  */
@@ -629,7 +451,7 @@ async function createBridge(): Promise<ExtensionBridge | null> {
 program
   .command('sync <file>')
   .description('同步 Markdown/HTML 文件到平台（HTML 文件可保留自定义排版样式）')
-  .option('-p, --platforms <platforms>', '目标平台，逗号分隔', 'zhihu,juejin')
+  .option('-p, --platforms <platforms>', '目标平台，逗号分隔（默认读取 Hexo sync.targets）')
   .option('-t, --title <title>', '文章标题（默认从文件提取）')
   .option('--cover <url>', '封面图 URL 或本地路径')
   .option('--dry-run', '仅显示将要执行的操作，不实际同步')
@@ -642,7 +464,13 @@ program
     }
 
     // 解析文件
-    const parsed = parseFileContent(filePath)
+    let parsed
+    try {
+      parsed = parseArticleSourceFile(filePath)
+    } catch (error) {
+      console.error(chalk.red(`文章解析失败: ${(error as Error).message}`))
+      process.exit(1)
+    }
 
     // 确定标题
     const title = options.title || parsed.title
@@ -652,30 +480,15 @@ program
       process.exit(1)
     }
 
-    // 处理封面图（优先使用命令行参数，回退到 HTML meta）
-    let cover = options.cover || parsed.cover
-    if (cover && !cover.startsWith('http') && !cover.startsWith('data:')) {
-      // 本地文件，转为 base64
-      const coverPath = path.resolve(cover)
-      if (fs.existsSync(coverPath)) {
-        const coverBuffer = fs.readFileSync(coverPath)
-        const ext = path.extname(coverPath).toLowerCase()
-        const mimeTypes: Record<string, string> = {
-          '.png': 'image/png',
-          '.jpg': 'image/jpeg',
-          '.jpeg': 'image/jpeg',
-          '.gif': 'image/gif',
-          '.webp': 'image/webp',
-        }
-        const mimeType = mimeTypes[ext] || 'image/png'
-        cover = `data:${mimeType};base64,${coverBuffer.toString('base64')}`
-      } else {
-        console.error(chalk.red(`封面图文件不存在: ${coverPath}`))
-        process.exit(1)
-      }
+    let cover: string | undefined
+    let platforms: string[]
+    try {
+      cover = materializeCover(options.cover || parsed.cover, filePath)
+      platforms = selectPlatforms(options.platforms, parsed)
+    } catch (error) {
+      console.error(chalk.red((error as Error).message))
+      process.exit(1)
     }
-
-    const platforms = options.platforms.split(',').map((p: string) => p.trim().toLowerCase())
 
     // 准备内容
     const markdown = parsed.format === 'markdown' ? parsed.content : undefined
@@ -751,6 +564,10 @@ program
           markdown: processedMarkdown,
           content: processedHtml,
           cover,
+          summary: parsed.summary,
+          tags: parsed.tags,
+          category: parsed.category,
+          canonical: parsed.canonical,
         },
       })
 

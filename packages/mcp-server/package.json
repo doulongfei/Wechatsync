@@ -5,8 +5,14 @@
   "type": "module",
   "main": "dist/index.js",
   "exports": {
-    ".": "./dist/index.js",
-    "./bridge": "./dist/exports.js"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./bridge": {
+      "types": "./dist/exports.d.ts",
+      "import": "./dist/exports.js"
+    }
   },
   "bin": {
     "wechatsync-mcp": "./dist/index.js"
