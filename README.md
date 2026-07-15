@@ -250,6 +250,10 @@ pnpm build
 
 ## 更新日志
 
+### v2.1.1 (2026-07-15, doulongfei fork)
+
+- 🐛 微博未登录时不再把“页面缺少用户配置”记录为 Chrome 扩展错误
+
 ### v2.1.0 (2026-07-14, doulongfei fork)
 
 - 🆕 CLI 直接解析 Hexo Front Matter、同步目标和本地封面

@@ -86,7 +86,7 @@ export class WeiboAdapter extends CodeAdapter {
 
     const configMatch = html.match(/config:\s*JSON\.parse\('(.+?)'\)/)
     if (!configMatch) {
-      logger.error('Failed to find config in HTML')
+      logger.debug('User config not found; treating the session as logged out')
       return null
     }
 
