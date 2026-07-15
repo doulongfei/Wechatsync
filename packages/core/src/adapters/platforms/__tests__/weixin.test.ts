@@ -11,6 +11,7 @@ interface FakeRuntimeResult {
   runtime: RuntimeInterface
   fetchMock: ReturnType<typeof vi.fn>
   getDraftBody(): URLSearchParams | undefined
+  getCropRequest(): RequestInit | undefined
 }
 
 function jsonResponse(value: unknown): Response {
@@ -22,6 +23,7 @@ function jsonResponse(value: unknown): Response {
 
 function createRuntime(options: RuntimeOptions = {}): FakeRuntimeResult {
   let draftBody: URLSearchParams | undefined
+  let cropRequest: RequestInit | undefined
   const fetchMock = vi.fn(async (url: string, request?: RequestInit) => {
     if (url === 'https://mp.weixin.qq.com/') {
       return new Response(
@@ -44,6 +46,7 @@ function createRuntime(options: RuntimeOptions = {}): FakeRuntimeResult {
     }
 
     if (url.includes('/cgi-bin/cropimage?action=crop_multi')) {
+      cropRequest = request
       return jsonResponse(
         options.cropError
           ? { base_resp: { err_msg: 'crop failed', ret: 1 } }
@@ -99,6 +102,7 @@ function createRuntime(options: RuntimeOptions = {}): FakeRuntimeResult {
     runtime,
     fetchMock,
     getDraftBody: () => draftBody,
+    getCropRequest: () => cropRequest,
   }
 }
 
@@ -122,6 +126,39 @@ afterEach(() => {
 })
 
 describe('WeixinAdapter cover publishing', () => {
+  it('uses the current URL-encoded crop contract with normalized coordinates', async () => {
+    installImageMocks()
+    const fake = createRuntime()
+    const adapter = new WeixinAdapter()
+    await adapter.init(fake.runtime)
+
+    const result = await adapter.publish({
+      title: 'Crop contract',
+      markdown: 'Body',
+      html: '<p>Body</p>',
+      cover: 'https://cdn.example.com/cover.jpg',
+    })
+
+    expect(result.success).toBe(true)
+    const request = fake.getCropRequest()
+    expect(request?.body).toBeInstanceOf(URLSearchParams)
+
+    const body = request?.body as URLSearchParams
+    expect(body.get('format0')).toBe('2.35_1')
+    expect(body.get('format1')).toBe('1_1')
+    expect(body.get('fingerprint')).toBe('TOKEN')
+    expect(Number(body.get('size0_y1'))).toBeGreaterThan(0)
+    expect(Number(body.get('size0_y2'))).toBeLessThanOrEqual(1)
+    expect(Number(body.get('size1_x1'))).toBeGreaterThan(0)
+    expect(Number(body.get('size1_x2'))).toBeLessThanOrEqual(1)
+
+    const headers = new Headers(request?.headers)
+    expect(headers.get('Content-Type')).toBe(
+      'application/x-www-form-urlencoded; charset=UTF-8'
+    )
+    expect(headers.get('X-Requested-With')).toBe('XMLHttpRequest')
+  })
+
   it('uploads, crops, and writes an explicit cover into the draft form', async () => {
     const imageFetch = installImageMocks()
     const fake = createRuntime()

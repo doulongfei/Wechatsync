@@ -18,6 +18,7 @@ const logger = createLogger('Weixin')
 
 interface WeixinMeta {
   token: string
+  fingerprint: string
   userName: string
   nickName: string
   ticket: string
@@ -115,6 +116,7 @@ export class WeixinAdapter extends CodeAdapter {
       const nickNameMatch = html.match(/nick_name:\s*["']([^"']+)["']/)
       const timeMatch = html.match(/time:\s*["'](\d+)["']/)
       const headImgMatch = html.match(/head_img:\s*['"]([^'"]+)['"]/)
+      const fingerprintMatch = html.match(/fingerprint:\s*["']([^"']+)["']/)
 
       const avatarMatch = html.match(/class="weui-desktop-account__thumb"[^>]*src="([^"]+)"/)
       let avatar = avatarMatch ? avatarMatch[1] : (headImgMatch ? headImgMatch[1] : '')
@@ -124,6 +126,7 @@ export class WeixinAdapter extends CodeAdapter {
 
       this.weixinMeta = {
         token: tokenMatch[1],
+        fingerprint: fingerprintMatch?.[1] || tokenMatch[1],
         userName: userNameMatch ? userNameMatch[1] : '',
         nickName: nickNameMatch ? nickNameMatch[1] : '',
         ticket: ticketMatch ? ticketMatch[1] : '',
@@ -418,15 +421,18 @@ export class WeixinAdapter extends CodeAdapter {
   ): Promise<[WeixinCroppedImage, WeixinCroppedImage]> {
     if (!this.weixinMeta) throw new Error('未登录')
 
-    const formData = new FormData()
+    const formData = new URLSearchParams()
     formData.append('imgurl', imageUrl)
     formData.append('size_count', String(rectangles.length))
+    const formats = ['2.35_1', '1_1'] as const
     rectangles.forEach((rect, index) => {
-      formData.append(`size${index}_x1`, String(rect.x1))
-      formData.append(`size${index}_y1`, String(rect.y1))
-      formData.append(`size${index}_x2`, String(rect.x2))
-      formData.append(`size${index}_y2`, String(rect.y2))
+      formData.append(`size${index}_x1`, String(rect.percent.x1))
+      formData.append(`size${index}_y1`, String(rect.percent.y1))
+      formData.append(`size${index}_x2`, String(rect.percent.x2))
+      formData.append(`size${index}_y2`, String(rect.percent.y2))
+      formData.append(`format${index}`, formats[index])
     })
+    formData.append('fingerprint', this.weixinMeta.fingerprint)
     formData.append('token', this.weixinMeta.token)
     formData.append('lang', 'zh_CN')
     formData.append('f', 'json')
@@ -437,6 +443,10 @@ export class WeixinAdapter extends CodeAdapter {
       {
         method: 'POST',
         credentials: 'include',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+          'X-Requested-With': 'XMLHttpRequest',
+        },
         body: formData,
       }
     )

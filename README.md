@@ -250,6 +250,11 @@ pnpm build
 
 ## 更新日志
 
+### v2.1.2 (2026-07-15, doulongfei fork)
+
+- 🐛 适配微信公众号新版 `crop_multi` 封面裁剪请求格式
+- 🔧 扩展构建不再向 TypeScript 源码目录写入旧 JavaScript 产物
+
 ### v2.1.1 (2026-07-15, doulongfei fork)
 
 - 🐛 微博未登录时不再把“页面缺少用户配置”记录为 Chrome 扩展错误
