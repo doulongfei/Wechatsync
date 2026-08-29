@@ -214,7 +214,10 @@ export class WeixinAdapter extends CodeAdapter {
         fileid0: '',
         ...digestFields,
         content0: content,
-        sourceurl0: '',
+        // 「阅读原文」是公众号唯一允许的可点击外链出口：正文里的外部链接一律
+        // 不可跳转，只能降级成文末脚注的纯文本。把原文地址挂在这里，读者至少
+        // 有一条一键抵达的路径。
+        sourceurl0: article.source?.url ?? '',
         need_open_comment0: '1',
         only_fans_can_comment0: '0',
         ...coverFields,
