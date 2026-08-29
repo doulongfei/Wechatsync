@@ -13,12 +13,15 @@ const CSDN_TAG_MAX_LENGTH = 20
 /** CSDN 一篇文章最多 5 个标签，多传不会报错但只保留前 5 个。 */
 const CSDN_TAG_MAX_COUNT = 5
 
+/** CSDN 摘要框上限 256 字，留空时后台会自动截取正文前 256 字。 */
+const CSDN_DESCRIPTION_MAX_LENGTH = 256
+
 /**
- * 把 Article.tags 规范成 CSDN 需要的逗号分隔字符串。
+ * 把 Article.tags 规范成 CSDN 的标签数组。
  * 去空白、去重、丢弃超长标签，并截断到平台上限。
  */
-export function normalizeCsdnTags(tags?: string[]): string {
-  if (!tags?.length) return ''
+export function normalizeCsdnTags(tags?: string[]): string[] {
+  if (!tags?.length) return []
   const seen = new Set<string>()
   const kept: string[] = []
   for (const raw of tags) {
@@ -32,7 +35,19 @@ export function normalizeCsdnTags(tags?: string[]): string {
   if (tags.length > kept.length) {
     logger.debug(`Tags trimmed for CSDN: ${tags.length} -> ${kept.length}`)
   }
-  return kept.join(',')
+  return kept
+}
+
+/**
+ * 规范化 CSDN 摘要：压平空白并按 256 字上限截断。
+ * 返回空串时 CSDN 会自动截取正文前 256 字。
+ */
+export function normalizeCsdnDescription(summary?: string): string {
+  const text = String(summary ?? '').replace(/\s+/g, ' ').trim()
+  if (!text) return ''
+  if (text.length <= CSDN_DESCRIPTION_MAX_LENGTH) return text
+  logger.debug(`Description truncated for CSDN: ${text.length} -> ${CSDN_DESCRIPTION_MAX_LENGTH}`)
+  return `${text.slice(0, CSDN_DESCRIPTION_MAX_LENGTH - 1)}…`
 }
 
 interface CSDNUserInfo {
@@ -235,6 +250,22 @@ export class CSDNAdapter extends CodeAdapter {
       // Get HTML content (CSDN API needs both markdown and HTML)
       const htmlContent = article.html || ''
 
+      // 封面必须先落到 CSDN 图床：直传外链后台会静默忽略，草稿里看不到封面。
+      // 失败时降级为无封面发布——封面是锦上添花，不该让整篇文章同步失败。
+      let coverUrl = ''
+      if (article.cover) {
+        if (/csdnimg\.cn|csdn\.net/.test(article.cover)) {
+          coverUrl = article.cover
+        } else {
+          try {
+            coverUrl = (await this.uploadImageByUrl(article.cover)).url
+            logger.debug('Cover uploaded to CSDN:', coverUrl)
+          } catch (error) {
+            logger.warn(`Cover upload failed, publishing without one: ${(error as Error).message}`)
+          }
+        }
+      }
+
       // Generate signature and save article
       const apiPath = '/blog-console-api/v3/mdeditor/saveArticle'
       const headers = await this.signRequest(apiPath)
@@ -251,9 +282,13 @@ export class CSDNAdapter extends CodeAdapter {
             content: htmlContent,
             readType: 'public',
             level: 0,
-            // CSDN 的标签是逗号分隔字符串，后台最多接受 5 个。
+            // 标签最多 5 个。逗号分隔字符串验证下来会被后台忽略（草稿里只剩
+            // CSDN 自己推荐的标签），因此传数组。
             tags: normalizeCsdnTags(article.tags),
             status: 2, // 草稿
+            description: normalizeCsdnDescription(article.summary),
+            // 分类专栏是需要预先创建的实体，这里要的是专栏 ID 而非任意字符串，
+            // 留空表示不归入任何专栏。
             categories: '',
             type: 'original',
             original_link: '',
@@ -261,8 +296,8 @@ export class CSDNAdapter extends CodeAdapter {
             not_auto_saved: '1',
             source: 'pc_mdeditor',
             // cover_type 1 表示单图封面；没有封面时必须回落到 0，否则后台会渲染空图位。
-            cover_images: article.cover ? [article.cover] : [],
-            cover_type: article.cover ? 1 : 0,
+            cover_images: coverUrl ? [coverUrl] : [],
+            cover_type: coverUrl ? 1 : 0,
             is_new: 1,
             vote_id: 0,
             resource_id: '',

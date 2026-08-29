@@ -1,33 +1,56 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeCsdnTags } from '../csdn'
+import { normalizeCsdnDescription, normalizeCsdnTags } from '../csdn'
 import { normalizeJuejinBrief } from '../juejin'
 
 describe('normalizeCsdnTags', () => {
-  it('joins tags with commas as CSDN expects', () => {
-    expect(normalizeCsdnTags(['AI', '软件设计'])).toBe('AI,软件设计')
+  // A comma-joined string was silently dropped by CSDN: the saved draft came
+  // back carrying only the platform's own suggested tag. It wants an array.
+  it('returns an array rather than a comma-joined string', () => {
+    expect(normalizeCsdnTags(['AI', '软件设计'])).toEqual(['AI', '软件设计'])
   })
 
-  it('returns an empty string when there are no tags', () => {
-    expect(normalizeCsdnTags(undefined)).toBe('')
-    expect(normalizeCsdnTags([])).toBe('')
+  it('returns an empty array when there are no tags', () => {
+    expect(normalizeCsdnTags(undefined)).toEqual([])
+    expect(normalizeCsdnTags([])).toEqual([])
   })
 
   it('caps the list at the five tags CSDN keeps', () => {
     const tags = ['a', 'b', 'c', 'd', 'e', 'f', 'g']
-    expect(normalizeCsdnTags(tags)).toBe('a,b,c,d,e')
+    expect(normalizeCsdnTags(tags)).toEqual(['a', 'b', 'c', 'd', 'e'])
   })
 
   it('drops duplicates and blank entries, preserving order', () => {
-    expect(normalizeCsdnTags(['AI', '  ', 'AI', 'Go', ''])).toBe('AI,Go')
+    expect(normalizeCsdnTags(['AI', '  ', 'AI', 'Go', ''])).toEqual(['AI', 'Go'])
   })
 
   it('trims surrounding whitespace before comparing', () => {
-    expect(normalizeCsdnTags([' AI ', 'AI'])).toBe('AI')
+    expect(normalizeCsdnTags([' AI ', 'AI'])).toEqual(['AI'])
   })
 
   it('skips tags longer than the platform limit instead of truncating them', () => {
     const tooLong = 'x'.repeat(21)
-    expect(normalizeCsdnTags([tooLong, 'AI'])).toBe('AI')
+    expect(normalizeCsdnTags([tooLong, 'AI'])).toEqual(['AI'])
+  })
+})
+
+describe('normalizeCsdnDescription', () => {
+  it('passes a short summary through unchanged', () => {
+    expect(normalizeCsdnDescription('一句摘要')).toBe('一句摘要')
+  })
+
+  it('returns an empty string so CSDN falls back to the first 256 body chars', () => {
+    expect(normalizeCsdnDescription(undefined)).toBe('')
+    expect(normalizeCsdnDescription('  ')).toBe('')
+  })
+
+  it('collapses whitespace runs from a folded YAML summary', () => {
+    expect(normalizeCsdnDescription('第一段\n\n第二段')).toBe('第一段 第二段')
+  })
+
+  it('truncates to the 256-character limit with an ellipsis', () => {
+    const result = normalizeCsdnDescription('字'.repeat(300))
+    expect(result).toHaveLength(256)
+    expect(result.endsWith('…')).toBe(true)
   })
 })
 

@@ -237,6 +237,22 @@ export class JuejinAdapter extends CodeAdapter {
         }
       )
 
+      // 封面同样要先落到掘金图床，外链不会被后台采纳。
+      // 失败时降级为无封面，不阻断正文同步。
+      let coverUrl = ''
+      if (article.cover) {
+        if (/juejin\.cn|p\d-juejin|byteimg\.com/.test(article.cover)) {
+          coverUrl = article.cover
+        } else {
+          try {
+            coverUrl = (await this.uploadImageByUrl(article.cover)).url
+            logger.debug('Cover uploaded to Juejin:', coverUrl)
+          } catch (error) {
+            logger.warn(`Cover upload failed, publishing without one: ${(error as Error).message}`)
+          }
+        }
+      }
+
       // 6. 创建草稿 (参数来自 DSL juejin.yaml + juejin.transform.ts prepareBody)
       const createResponse = await this.runtime.fetch(
         'https://api.juejin.cn/content_api/v1/article_draft/create',
@@ -253,7 +269,7 @@ export class JuejinAdapter extends CodeAdapter {
             // category_id 与 tag_ids 要的是掘金侧 ID 而非名称，需要 taxonomy 映射，
             // 暂留默认值；映射表接入后从 article.category / article.tags 解析。
             category_id: '0',
-            cover_image: article.cover ?? '',
+            cover_image: coverUrl,
             edit_type: 10,
             html_content: 'deprecated',
             link_url: '',
