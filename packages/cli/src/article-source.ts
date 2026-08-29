@@ -12,6 +12,13 @@ export interface ParsedArticleSource {
   tags?: string[]
   category?: string
   canonical?: string
+  /**
+   * Hexo 已构建好的正文 HTML（来自 public/ 下的产物）。
+   * 它和读者在站点上看到的完全一致——表格、代码高亮、脚注都由 Hexo 的
+   * 渲染器产出，比 CLI 里那个手写正则转换器保真得多（后者不支持表格）。
+   * 只有找得到构建产物时才有值，找不到就沿用正则转换的结果。
+   */
+  renderedHtml?: string
   sync?: {
     enabled?: boolean
     targets?: string[]
@@ -184,7 +191,12 @@ export function parseFileContent(filePath: string): ParsedArticleSource {
   const content = fs.readFileSync(filePath, 'utf-8')
   const extension = path.extname(filePath).toLowerCase()
 
-  if (extension === '.md' || extension === '.markdown') return parseMarkdown(content)
+  if (extension === '.md' || extension === '.markdown') {
+    const parsed = parseMarkdown(content)
+    // Hexo 源文件优先复用已构建的正文：站点上呈现什么，同步过去就是什么。
+    const rendered = loadRenderedHtml(filePath, parsed.canonical)
+    return rendered ? { ...parsed, renderedHtml: rendered } : parsed
+  }
   if (extension === '.html' || extension === '.htm') return parseHtml(content, filePath)
 
   return {
@@ -211,6 +223,84 @@ export function selectPlatforms(
   }
 
   return ['zhihu', 'juejin']
+}
+
+/** Hexo 主题渲染出的正文容器 id（Solitude 等主流主题一致沿用这个约定）。 */
+const RENDERED_BODY_ANCHOR = /<article[^>]*id="article-container"[^>]*>/i
+
+/**
+ * 从 Hexo 构建产物中抽出正文块。
+ * 用配对计数而不是找第一个 </article>，因为正文里可能嵌套 article 元素。
+ * 返回 undefined 表示这份 HTML 不是预期结构，调用方应回退。
+ */
+export function extractRenderedBody(html: string): string | undefined {
+  const start = html.match(RENDERED_BODY_ANCHOR)
+  if (!start || start.index === undefined) return undefined
+
+  let depth = 0
+  let cursor = start.index
+  const tagPattern = /<(\/?)article\b[^>]*>/gi
+  tagPattern.lastIndex = start.index
+
+  let match: RegExpExecArray | null
+  while ((match = tagPattern.exec(html)) !== null) {
+    depth += match[1] ? -1 : 1
+    if (depth === 0) {
+      cursor = match.index + match[0].length
+      break
+    }
+  }
+  if (depth !== 0) return undefined
+
+  let body = html.slice(start.index + start[0].length, cursor).replace(/<\/article>$/i, '')
+
+  // 目录锚点在站外没有意义，去掉以免正文里散落空链接。
+  body = body.replace(/<a[^>]*class="headerlink"[^>]*>\s*<\/a>/gi, '')
+  // 构建产物里混入的脚本对目标平台无用，且多半会被过滤掉。
+  body = body.replace(/<script[\s\S]*?<\/script>/gi, '')
+
+  return body.trim() || undefined
+}
+
+/**
+ * 根据 canonical 定位 Hexo 构建产物并读取渲染后的正文。
+ *
+ * 用 canonical 而不是自己套 permalink 规则推导路径：permalink 可配置，
+ * 而 canonical 已经是文章自己声明的最终 URL，两者不一致时应以后者为准。
+ */
+export function loadRenderedHtml(
+  articlePath: string,
+  canonical: string | undefined
+): string | undefined {
+  if (!canonical) return undefined
+
+  const hexoRoot = findHexoRoot(articlePath)
+  if (!hexoRoot) return undefined
+
+  let pathname: string
+  try {
+    pathname = new URL(canonical).pathname
+  } catch {
+    return undefined
+  }
+
+  const segments = pathname.split('/').filter(Boolean).map(decodeURIComponent)
+  if (segments.length === 0) return undefined
+
+  const candidates = [
+    path.join(hexoRoot, 'public', ...segments, 'index.html'),
+    path.join(hexoRoot, 'public', ...segments) + '.html',
+  ]
+
+  for (const candidate of candidates) {
+    if (!fs.existsSync(candidate)) continue
+    try {
+      return extractRenderedBody(fs.readFileSync(candidate, 'utf-8'))
+    } catch {
+      return undefined
+    }
+  }
+  return undefined
 }
 
 function findHexoRoot(articlePath: string): string | undefined {

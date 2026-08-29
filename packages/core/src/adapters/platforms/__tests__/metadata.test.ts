@@ -3,33 +3,33 @@ import { normalizeCsdnDescription, normalizeCsdnTags } from '../csdn'
 import { normalizeJuejinBrief } from '../juejin'
 
 describe('normalizeCsdnTags', () => {
-  // A comma-joined string was silently dropped by CSDN: the saved draft came
-  // back carrying only the platform's own suggested tag. It wants an array.
-  it('returns an array rather than a comma-joined string', () => {
-    expect(normalizeCsdnTags(['AI', '软件设计'])).toEqual(['AI', '软件设计'])
+  // An array made saveArticle return 400, so the field really is a string.
+  // A comma-joined string saves fine but the tags still do not show up.
+  it('joins tags into the comma-separated string the API accepts', () => {
+    expect(normalizeCsdnTags(['AI', '软件设计'])).toBe('AI,软件设计')
   })
 
-  it('returns an empty array when there are no tags', () => {
-    expect(normalizeCsdnTags(undefined)).toEqual([])
-    expect(normalizeCsdnTags([])).toEqual([])
+  it('returns an empty string when there are no tags', () => {
+    expect(normalizeCsdnTags(undefined)).toBe('')
+    expect(normalizeCsdnTags([])).toBe('')
   })
 
-  it('caps the list at the five tags CSDN keeps', () => {
+  it('caps the list at the seven tags CSDN keeps', () => {
     const tags = ['a', 'b', 'c', 'd', 'e', 'f', 'g']
-    expect(normalizeCsdnTags(tags)).toEqual(['a', 'b', 'c', 'd', 'e'])
+    expect(normalizeCsdnTags(tags)).toBe('a,b,c,d,e,f,g')
   })
 
   it('drops duplicates and blank entries, preserving order', () => {
-    expect(normalizeCsdnTags(['AI', '  ', 'AI', 'Go', ''])).toEqual(['AI', 'Go'])
+    expect(normalizeCsdnTags(['AI', '  ', 'AI', 'Go', ''])).toBe('AI,Go')
   })
 
   it('trims surrounding whitespace before comparing', () => {
-    expect(normalizeCsdnTags([' AI ', 'AI'])).toEqual(['AI'])
+    expect(normalizeCsdnTags([' AI ', 'AI'])).toBe('AI')
   })
 
   it('skips tags longer than the platform limit instead of truncating them', () => {
     const tooLong = 'x'.repeat(21)
-    expect(normalizeCsdnTags([tooLong, 'AI'])).toEqual(['AI'])
+    expect(normalizeCsdnTags([tooLong, 'AI'])).toBe('AI')
   })
 })
 

@@ -10,18 +10,22 @@ const logger = createLogger('CSDN')
 
 /** CSDN 后台对单个标签的长度上限，超出会被静默丢弃。 */
 const CSDN_TAG_MAX_LENGTH = 20
-/** CSDN 一篇文章最多 5 个标签，多传不会报错但只保留前 5 个。 */
-const CSDN_TAG_MAX_COUNT = 5
+/** CSDN 一篇文章最多 7 个标签（发布对话框实测：已有 1 个时提示「还可添加6个」）。 */
+const CSDN_TAG_MAX_COUNT = 7
 
 /** CSDN 摘要框上限 256 字，留空时后台会自动截取正文前 256 字。 */
 const CSDN_DESCRIPTION_MAX_LENGTH = 256
 
 /**
- * 把 Article.tags 规范成 CSDN 的标签数组。
+ * 把 Article.tags 规范成 CSDN 需要的逗号分隔字符串。
  * 去空白、去重、丢弃超长标签，并截断到平台上限。
+ *
+ * 格式实测记录：传数组 saveArticle 直接返回 400 Bad Request，所以字段类型
+ * 确实是字符串。但逗号串虽然能保存成功，标签却不会出现在草稿里——推测
+ * CSDN 需要先通过独立接口注册标签，saveArticle 只接受已存在的标签。
  */
-export function normalizeCsdnTags(tags?: string[]): string[] {
-  if (!tags?.length) return []
+export function normalizeCsdnTags(tags?: string[]): string {
+  if (!tags?.length) return ''
   const seen = new Set<string>()
   const kept: string[] = []
   for (const raw of tags) {
@@ -35,7 +39,7 @@ export function normalizeCsdnTags(tags?: string[]): string[] {
   if (tags.length > kept.length) {
     logger.debug(`Tags trimmed for CSDN: ${tags.length} -> ${kept.length}`)
   }
-  return kept
+  return kept.join(',')
 }
 
 /**
@@ -282,8 +286,6 @@ export class CSDNAdapter extends CodeAdapter {
             content: htmlContent,
             readType: 'public',
             level: 0,
-            // 标签最多 5 个。逗号分隔字符串验证下来会被后台忽略（草稿里只剩
-            // CSDN 自己推荐的标签），因此传数组。
             tags: normalizeCsdnTags(article.tags),
             status: 2, // 草稿
             description: normalizeCsdnDescription(article.summary),

@@ -491,8 +491,13 @@ program
     }
 
     // 准备内容
+    // renderedHtml 来自 Hexo 构建产物，保真度高于本地的正则转换（它不支持表格），
+    // 有就优先用；没有再回退到 markdownToHtml。
     const markdown = parsed.format === 'markdown' ? parsed.content : undefined
-    const html = parsed.format === 'html' ? parsed.content : markdownToHtml(parsed.content)
+    const html =
+      parsed.format === 'html'
+        ? parsed.content
+        : parsed.renderedHtml ?? markdownToHtml(parsed.content)
 
     console.log()
     console.log(chalk.bold('同步信息:'))
@@ -538,6 +543,8 @@ program
         // 更新内容
         if (parsed.format === 'markdown') {
           processedMarkdown = imageResult.content
+          // 本地图片被替换成图床链接后，构建产物里的旧链接已经过期，
+          // 只能退回正则转换，否则正文会指向不存在的本地路径。
           processedHtml = markdownToHtml(imageResult.content)
         } else {
           processedHtml = imageResult.content
