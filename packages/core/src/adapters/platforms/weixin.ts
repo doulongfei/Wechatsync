@@ -76,6 +76,9 @@ export class WeixinAdapter extends CodeAdapter {
     outputFormat: 'html' as const,
     removeLinks: true,
     keepLinkDomains: ['mp.weixin.qq.com', 'weixin.qq.com'],
+    // 公众号不允许正文外链跳转，但直接丢掉地址会让引用来源无法查证，
+    // 因此降级成文末脚注：正文标 [n]，末尾列出完整 URL 供读者复制。
+    linkFootnotes: true,
     compactHtml: true,
   }
 

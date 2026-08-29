@@ -19,6 +19,15 @@ export interface PreprocessConfig {
   removeLinks?: boolean
   /** 保留的链接域名 */
   keepLinkDomains?: string[]
+  /**
+   * 被移除的链接降级为文末脚注，而不是丢弃地址。
+   * 正文里标 [n]，文末列出编号与完整 URL。
+   * 用于微信公众号这类禁止外链跳转的平台——直接丢掉 href 会让引用来源
+   * 彻底不可考，读者既点不动也看不到地址。
+   */
+  linkFootnotes?: boolean
+  /** 脚注区标题，默认「参考链接」 */
+  linkFootnotesTitle?: string
 
   /** 移除 iframe */
   removeIframes?: boolean

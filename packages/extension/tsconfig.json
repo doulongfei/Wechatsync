@@ -1,6 +1,14 @@
 {
   "extends": "../../tsconfig.json",
   "compilerOptions": {
+    /*
+     * 本包由 vite 构建，tsc 只用来做类型检查。
+     * 不设 noEmit 时，任何人直接跑 `tsc`（或 IDE 触发编译）都会把 .js/.d.ts
+     * 就地吐在源文件旁边——这些产物被 .gitignore 忽略，却会让无扩展名的
+     * import 优先解析到它们，造成 vite build 读 .ts、vitest 读 .js 的分裂。
+     * 其余各包都有 outDir 兜底，只有这里缺，历史上因此积累了 192 个残留文件。
+     */
+    "noEmit": true,
     "types": ["vite/client", "chrome", "node"],
     "jsx": "react-jsx",
     "baseUrl": ".",

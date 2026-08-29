@@ -81,7 +81,10 @@ export function preprocessForPlatform(rawHtml: string, config: PreprocessConfig)
   cleanSourcePlatformLinks(container)
 
   if (config.removeLinks) {
-    processLinks(container, config.keepLinkDomains)
+    processLinks(container, config.keepLinkDomains, {
+      footnotes: config.linkFootnotes,
+      footnotesTitle: config.linkFootnotesTitle,
+    })
   }
 
   if (config.processLazyImages) {
@@ -269,8 +272,20 @@ function cleanSourcePlatformLinks(container: HTMLElement): void {
 /**
  * 处理链接
  */
-function processLinks(container: HTMLElement, keepDomains?: string[]): void {
+interface ProcessLinksOptions {
+  /** 把被移除的链接降级为文末脚注，而不是丢掉地址 */
+  footnotes?: boolean
+  footnotesTitle?: string
+}
+
+function processLinks(
+  container: HTMLElement,
+  keepDomains?: string[],
+  options: ProcessLinksOptions = {}
+): void {
   const links = container.querySelectorAll('a')
+  // 同一地址只占一个编号：正文里重复引用同一来源很常见。
+  const footnotes = new Map<string, number>()
 
   links.forEach((link) => {
     const href = link.getAttribute('href')
@@ -283,8 +298,65 @@ function processLinks(container: HTMLElement, keepDomains?: string[]): void {
     // 用 span 替换 a 标签
     const span = document.createElement('span')
     span.innerHTML = link.innerHTML
+
+    if (options.footnotes && isFootnotableHref(href)) {
+      const url = href as string
+      let index = footnotes.get(url)
+      if (index === undefined) {
+        index = footnotes.size + 1
+        footnotes.set(url, index)
+      }
+      // 链接文字本身就是地址时不再标注编号，否则同一 URL 会出现两次。
+      if (span.textContent?.trim() !== url) {
+        const marker = document.createElement('sup')
+        marker.textContent = `[${index}]`
+        span.appendChild(marker)
+      }
+    }
+
     link.parentNode?.replaceChild(span, link)
   })
+
+  if (options.footnotes && footnotes.size > 0) {
+    appendLinkFootnotes(container, footnotes, options.footnotesTitle)
+  }
+}
+
+/**
+ * 只有能真正打开的绝对地址才值得进脚注。
+ * 页内锚点、mailto、javascript: 之类列出来对读者没有意义。
+ */
+export function isFootnotableHref(href: string | null): boolean {
+  if (!href) return false
+  const trimmed = href.trim()
+  if (!trimmed || trimmed.startsWith('#')) return false
+  return /^https?:\/\//i.test(trimmed)
+}
+
+/**
+ * 在正文末尾追加参考链接区。
+ * 面向微信公众号这类禁止外链跳转的平台：地址以纯文本列出，读者仍可复制查证。
+ */
+function appendLinkFootnotes(
+  container: HTMLElement,
+  footnotes: Map<string, number>,
+  title = '参考链接'
+): void {
+  const section = document.createElement('section')
+
+  const heading = document.createElement('p')
+  const strong = document.createElement('strong')
+  strong.textContent = title
+  heading.appendChild(strong)
+  section.appendChild(heading)
+
+  for (const [url, index] of [...footnotes.entries()].sort((a, b) => a[1] - b[1])) {
+    const line = document.createElement('p')
+    line.textContent = `[${index}] ${url}`
+    section.appendChild(line)
+  }
+
+  container.appendChild(section)
 }
 
 /**
