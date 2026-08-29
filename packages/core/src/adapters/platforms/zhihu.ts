@@ -150,22 +150,57 @@ export class ZhihuAdapter extends CodeAdapter {
       // 4. 知乎特定的内容转换
       content = this.transformContent(content)
 
-      // 5. 更新草稿内容
-      const updateResponse = await this.runtime.fetch(
-        `https://zhuanlan.zhihu.com/api/articles/${draftId}/draft`,
-        {
-          method: 'PATCH',
-          credentials: 'include',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-requested-with': 'fetch',
-          },
-          body: JSON.stringify({
-            title: article.title,
-            content: content,
-          }),
+      // 5. 题图先过知乎图床。外链在知乎同样不被采纳，必须换成 zhimg.com 地址。
+      let titleImage = ''
+      if (article.cover) {
+        if (/zhimg\.com/.test(article.cover)) {
+          titleImage = article.cover
+        } else {
+          try {
+            titleImage = (await this.uploadImageByUrl(article.cover)).url
+            logger.debug('Cover uploaded to Zhihu:', titleImage)
+          } catch (error) {
+            logger.warn(`Cover upload failed, publishing without one: ${(error as Error).message}`)
+          }
         }
-      )
+      }
+
+      // 6. 更新草稿内容
+      const updateDraft = (withCover: boolean) => {
+        const payload: Record<string, unknown> = {
+          title: article.title,
+          content: content,
+        }
+        if (withCover && titleImage) {
+          payload.titleImage = titleImage
+        }
+        return this.runtime.fetch(
+          `https://zhuanlan.zhihu.com/api/articles/${draftId}/draft`,
+          {
+            method: 'PATCH',
+            credentials: 'include',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-requested-with': 'fetch',
+            },
+            body: JSON.stringify(payload),
+          }
+        )
+      }
+
+      let updateResponse = await updateDraft(true)
+
+      // titleImage 已在真实草稿上验证可用（2026-08-29）。保留降级重试是因为
+      // 这是逆向出来的字段，知乎改接口时应该退化成「没有封面」而不是整篇同步失败。
+      if (!updateResponse.ok && titleImage) {
+        const failedText = await updateResponse.text()
+        logger.warn(
+          `Update with titleImage failed (${updateResponse.status}: ${failedText.slice(0, 120)}), ` +
+          'retrying without the cover field'
+        )
+        titleImage = ''
+        updateResponse = await updateDraft(false)
+      }
 
       // 检查更新响应 (PATCH 可能返回空响应或 204)
       if (!updateResponse.ok) {
