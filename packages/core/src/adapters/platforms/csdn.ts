@@ -8,6 +8,33 @@ import { createLogger } from '../../lib/logger'
 
 const logger = createLogger('CSDN')
 
+/** CSDN 后台对单个标签的长度上限，超出会被静默丢弃。 */
+const CSDN_TAG_MAX_LENGTH = 20
+/** CSDN 一篇文章最多 5 个标签，多传不会报错但只保留前 5 个。 */
+const CSDN_TAG_MAX_COUNT = 5
+
+/**
+ * 把 Article.tags 规范成 CSDN 需要的逗号分隔字符串。
+ * 去空白、去重、丢弃超长标签，并截断到平台上限。
+ */
+export function normalizeCsdnTags(tags?: string[]): string {
+  if (!tags?.length) return ''
+  const seen = new Set<string>()
+  const kept: string[] = []
+  for (const raw of tags) {
+    const tag = String(raw ?? '').trim()
+    if (!tag || tag.length > CSDN_TAG_MAX_LENGTH) continue
+    if (seen.has(tag)) continue
+    seen.add(tag)
+    kept.push(tag)
+    if (kept.length >= CSDN_TAG_MAX_COUNT) break
+  }
+  if (tags.length > kept.length) {
+    logger.debug(`Tags trimmed for CSDN: ${tags.length} -> ${kept.length}`)
+  }
+  return kept.join(',')
+}
+
 interface CSDNUserInfo {
   csdnid: string
   username: string
@@ -224,7 +251,8 @@ export class CSDNAdapter extends CodeAdapter {
             content: htmlContent,
             readType: 'public',
             level: 0,
-            tags: '',
+            // CSDN 的标签是逗号分隔字符串，后台最多接受 5 个。
+            tags: normalizeCsdnTags(article.tags),
             status: 2, // 草稿
             categories: '',
             type: 'original',
@@ -232,8 +260,9 @@ export class CSDNAdapter extends CodeAdapter {
             authorized_status: false,
             not_auto_saved: '1',
             source: 'pc_mdeditor',
-            cover_images: [],
-            cover_type: 1,
+            // cover_type 1 表示单图封面；没有封面时必须回落到 0，否则后台会渲染空图位。
+            cover_images: article.cover ? [article.cover] : [],
+            cover_type: article.cover ? 1 : 0,
             is_new: 1,
             vote_id: 0,
             resource_id: '',

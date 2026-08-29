@@ -9,6 +9,21 @@ import { createLogger } from '../../lib/logger'
 
 const logger = createLogger('Juejin')
 
+/** 掘金摘要上限 100 字。 */
+const JUEJIN_BRIEF_MAX_LENGTH = 100
+
+/**
+ * 规范化掘金摘要：压平换行与连续空白，超长时截断并留省略号。
+ * 摘要为空时返回空串，交由掘金自动从正文抽取。
+ */
+export function normalizeJuejinBrief(summary?: string): string {
+  const text = String(summary ?? '').replace(/\s+/g, ' ').trim()
+  if (!text) return ''
+  if (text.length <= JUEJIN_BRIEF_MAX_LENGTH) return text
+  logger.debug(`Brief truncated for Juejin: ${text.length} -> ${JUEJIN_BRIEF_MAX_LENGTH}`)
+  return `${text.slice(0, JUEJIN_BRIEF_MAX_LENGTH - 1)}…`
+}
+
 // ImageX 服务常量
 const IMAGEX_AID = '2608'
 const IMAGEX_SERVICE_ID = '73owjymdk6'
@@ -233,9 +248,12 @@ export class JuejinAdapter extends CodeAdapter {
             'x-secsdk-csrf-token': csrfToken,
           },
           body: JSON.stringify({
-            brief_content: '',
+            // 掘金摘要上限 100 字，超出后台会截断并提示。
+            brief_content: normalizeJuejinBrief(article.summary),
+            // category_id 与 tag_ids 要的是掘金侧 ID 而非名称，需要 taxonomy 映射，
+            // 暂留默认值；映射表接入后从 article.category / article.tags 解析。
             category_id: '0',
-            cover_image: '',
+            cover_image: article.cover ?? '',
             edit_type: 10,
             html_content: 'deprecated',
             link_url: '',
